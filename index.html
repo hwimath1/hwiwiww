@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>일차부등식</title>
+  <style>
+    body {
+      margin: 0; 
+      padding: 0;
+      font-family: sans-serif;
+      background: #f7f9fc;
+      color: #333;
+    }
+    #gameContainer {
+      width: 80%; max-width: 900px;
+      margin: 0 auto; text-align: center; padding: 20px;
+    }
+    h1 { color: #333; }
+    .centered {
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+    }
+    .hidden { display: none; }
+    .energyBarContainer {
+      width: 60%; background: #ccc; margin: 10px auto; height: 20px;
+      position: relative; border-radius: 10px; overflow: hidden;
+    }
+    .energyBar {
+      height: 100%; background: linear-gradient(to right, #82c91e, #fddb3a);
+      width: 100%; transition: width 1s linear;
+    }
+    .difficultyBtn {
+      display: inline-block; margin: 10px; padding: 10px 20px;
+      background: #3b5bdb; color: #fff; text-decoration: none; border-radius: 5px;
+      cursor: pointer;
+    }
+    .difficultyBtn:hover { background: #4c6ef5; }
+    .optionBtn {
+      display: block; width: 70%; max-width: 400px; margin: 10px auto;
+      padding: 10px; background: #dee2e6; border: none; border-radius: 5px;
+      cursor: pointer; text-align: left;
+    }
+    .optionBtn:hover { background: #ced4da; }
+    #chanceDisplay { font-size: 1.1em; margin: 10px 0; }
+    #totalTime { margin-top: 5px; font-size: 0.9em; color: #999; }
+    #scoreDisplay { font-size: 1.2em; margin-top: 5px; }
+    #response {
+      white-space: pre-wrap; margin-top: 10px; text-align: left;
+      color: #333; background: #f2f2f2; padding: 5px;
+      border: 1px solid #ccc; display: inline-block;
+      width: 70%; max-width: 600px; word-break: break-all;
+    }
+    .nameInput {
+      margin: 20px auto; text-align: center;
+    }
+    .nameInput input {
+      padding: 10px; font-size: 1em;
+      border: 1px solid #ccc; border-radius: 5px; width: 200px;
+    }
+    #saveBtn {
+      background: #22b8cf; color: #fff; border: none;
+      padding: 10px 20px; margin-top: 5px; border-radius: 5px; cursor: pointer;
+    }
+    #saveBtn:hover { background: #15aabf; }
+    #startBtn {
+      background: #fd7e14; color: #fff; border: none;
+      padding: 10px 20px; margin-top: 20px; border-radius: 5px; cursor: pointer;
+    }
+    #startBtn:hover { background: #f76707; }
+    .difficultyContainer { margin-top: 20px; }
+    #questionText p { margin: 10px 0; }
+  </style>
+</head>
+<body>
+<div id="gameContainer">
+
+  <!-- 첫 화면 (이름 입력 및 난이도 선택) -->
+  <div id="introScreen" class="centered">
+    <h1>일차부등식</h1>
+    <div class="nameInput">
+      <label for="playerName">이름을 입력하세요</label><br/>
+      <input type="text" id="playerName" placeholder="이름">
+    </div>
+    <div class="difficultyContainer">
+      <p>난이도를 선택하세요</p>
+      <button class="difficultyBtn" data-time="12" data-score="20">최상 (12초, +20점)</button>
+      <button class="difficultyBtn" data-time="18" data-score="15">상 (18초, +15점)</button>
+      <button class="difficultyBtn" data-time="22" data-score="13">중 (22초, +13점)</button>
+      <button class="difficultyBtn" data-time="0" data-score="10">하 (시간 제한 없음, +10점)</button>
+    </div>
+  </div>
+
+  <!-- 문제 화면 -->
+  <div id="quizScreen" class="hidden">
+    <div class="energyBarContainer">
+      <div class="energyBar" id="energyBar"></div>
+    </div>
+    <div id="chanceDisplay"></div>
+    <div id="scoreDisplay"></div>
+    <div id="totalTime"></div>
+
+    <div id="questionContainer">
+      <div id="questionText"></div>
+      <div id="optionButtons"></div>
+    </div>
+
+  </div>
+
+  <!-- 게임 종료 화면 -->
+  <div id="endScreen" class="hidden centered">
+    <h2>게임 종료</h2>
+    <div id="finalMessage"></div>
+    <button id="sendScoreBtn">점수 전송</button>
+    <div id="response"></div>
+  </div>
+
+</div>
+
+<script>
+/*
+  (1) 점수 전송 함수
+*/
+function saveData(game, name, score, elapsedTime) {
+  const FUNCTION_URL = "https://us-central1-record-f420d.cloudfunctions.net/report";
+
+  const requestData = {
+    game,
+    name,
+    score: parseInt(score, 10),
+    elapsedTime: parseInt(elapsedTime, 10)
+  };
+
+  fetch(FUNCTION_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(requestData)
+  })
+    .then(response => response.json().then(responseData => {
+      if (response.ok) {
+        document.getElementById('response').innerText =
+          `성공: ${JSON.stringify(responseData, null, 2)}`;
+      } else {
+        document.getElementById('response').innerText =
+          `오류: ${JSON.stringify(responseData, null, 2)}`;
+      }
+    }))
+    .catch(error => {
+      console.error('요청 실패:', error);
+      document.getElementById('response').innerText =
+        `네트워크 오류: ${error.message}`;
+    });
+}
+
+/*
+  (2) 문제 리스트
+     - 'question'은 지시 문구나 식 부분
+     - 'choices' 배열에 각 보기를 저장
+     - 'correct'는 0-based 정답 인덱스
+     - x^2 -> x², <= -> ≤, >= -> ≥
+     - 문제 순서는 뒤에서 무작위로 섞임
+*/
+
+// 1~16 (2지선다, "일차부등식인지 아닌지")
+const problem2Choices = [
+  {
+    instruction: "다음 중 일차부등식인 것에는 ○표를, 아닌 것에는 x표를 하여라.",
+    question: "(x - 3 ≤ 2x + 5) ( )",
+    choices: ["1. ○", "2. ×"],
+    correct: 0
+  },
+  {
+    instruction: "다음 중 일차부등식인 것에는 ○표를, 아닌 것에는 x표를 하여라.",
+    question: "(x² - 3x < 4) ( )",
+    choices: ["1. ○", "2. ×"],
+    correct: 1
+  },
+  {
+    instruction: "다음 중 일차부등식인 것에는 ○표를, 아닌 것에는 x표를 하여라.",
+    question: "(-x + 3 < 2 - x) ( )",
+    choices: ["1. ○", "2. ×"],
+    correct: 1
+  },
+  {
+    instruction: "다음 중 일차부등식인 것에는 ○표를, 아닌 것에는 x표를 하여라.",
+    question: "(x² - 4 ≥ x² + 2x) ( )",
+    choices: ["1. ○", "2. ×"],
+    correct: 0
+  },
+  {
+    instruction: "다음 중 일차부등식인 것에는 ○표를, 아닌 것에는 x표를 하여라.",
+    question: "(x + 5 > 8) ( )",
+    choices: ["1. ○", "2. ×"],
+    correct: 0
+  },
+  {
+    instruction: "다음 중 일차부등식인 것에는 ○표를, 아닌 것에는 x표를 하여라.",
+    question: "(7 + 2 > 4) ( )",
+    choices: ["1. ○", "2. ×"],
+    correct: 1
+  },
+  {
+    instruction: "다음 중 일차부등식인 것에는 ○표를, 아닌 것에는 x표를 하여라.",
+    question: "(3x + 1 ≤ 2) ( )",
+    choices: ["1. ○", "2. ×"],
+    correct: 0
+  },
+  {
+    instruction: "다음 중 일차부등식인 것에는 ○표를, 아닌 것에는 x표를 하여라.",
+    question: "(2x + 3 < 2(x - 1)) ( )",
+    choices: ["1. ○", "2. ×"],
+    correct: 1
+  },
+  {
+    instruction: "다음 중 일차부등식인 것에는 ○표를, 아닌 것에는 x표를 하여라.",
+    question: "(3x - 8x > 6x) ( )",
+    choices: ["1. ○", "2. ×"],
+    correct: 0
+  },
+  {
+    instruction: "다음 중 일차부등식인 것에는 ○표를, 아닌 것에는 x표를 하여라.",
+    question: "(2x + 10 = 4) ( )",
+    choices: ["1. ○", "2. ×"],
+    correct: 1
+  },
+  {
+    instruction: "다음 중 일차부등식인 것에는 ○표를, 아닌 것에는 x표를 하여라.",
+    question: "(x + 8 < 3x + 4) ( )",
+    choices: ["1. ○", "2. ×"],
+    correct: 0
+  },
+  {
+    instruction: "다음 중 일차부등식인 것에는 ○표를, 아닌 것에는 x표를 하여라.",
+    question: "(x² + x ≤ x²) ( )",
+    choices: ["1. ○", "2. ×"],
+    correct: 0
+  },
+  {
+    instruction: "다음 중 일차부등식인 것에는 ○표를, 아닌 것에는 x표를 하여라.",
+    question: "(-x + 3 < 5 - x) ( )",
+    choices: ["1. ○", "2. ×"],
+    correct: 1
+  },
+  {
+    instruction: "다음 중 일차부등식인 것에는 ○표를, 아닌 것에는 x표를 하여라.",
+    question: "(5x - 1 > 3x + 7) ( )",
+    choices: ["1. ○", "2. ×"],
+    correct: 0
+  },
+  {
+    instruction: "다음 중 일차부등식인 것에는 ○표를, 아닌 것에는 x표를 하여라.",
+    question: "(3x² + 2x - 5 ≤ 0) ( )",
+    choices: ["1. ○", "2. ×"],
+    correct: 1
+  },
+  {
+    instruction: "다음 중 일차부등식인 것에는 ○표를, 아닌 것에는 x표를 하여라.",
+    question: "(2x ≥ 2x + 5) ( )",
+    choices: ["1. ○", "2. ×"],
+    correct: 1
+  }
+];
+
+// 19~36, 37~58, 59~62 (4지선다)
+const problem4Choices = [
+  // 19~36
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "x + 2 > 5",
+    choices: ["1) x > 3", "2) x ≥ 5", "3) x ≤ 3", "4) x = 3"],
+    correct: 0
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "2x ≥ -8",
+    choices: ["1) x ≥ -4", "2) x ≥ -8", "3) x > -2", "4) x ≤ -4"],
+    correct: 0
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "5 - x ≥ 2 - 4x",
+    choices: ["1) x ≤ -1", "2) x ≥ -1", "3) x > 1", "4) x ≤ 1"],
+    correct: 1
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "-8 - 2x > 2x + 4",
+    choices: ["1) x < -3", "2) x > -3", "3) x ≤ -4", "4) x ≥ -4"],
+    correct: 0
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "4x - 7 > 2x - 6",
+    choices: ["1) x > 1/2", "2) x ≥ -1", "3) x < 1/2", "4) x ≤ 1"],
+    correct: 0
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "2 - 3x < 14 + 3x",
+    choices: ["1) x < -2", "2) x > -2", "3) x ≤ -2", "4) x ≥ -1"],
+    correct: 1
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "x - 1 > 2",
+    choices: ["1) x ≤ 3", "2) x > 3", "3) x ≥ 1", "4) x < 1"],
+    correct: 1
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "x + 3 ≤ -1",
+    choices: ["1) x ≤ -4", "2) x < -3", "3) x > -4", "4) x ≥ -3"],
+    correct: 0
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "2x < 10",
+    choices: ["1) x < 5", "2) x > 5", "3) x ≥ 0", "4) x ≤ -5"],
+    correct: 0
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "7x + 3 ≥ 4x",
+    choices: ["1) x ≥ -1", "2) x ≤ -1", "3) x > -3", "4) x = -1"],
+    correct: 0
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "-4x ≤ 20",
+    choices: ["1) x ≥ -5", "2) x > -5", "3) x < -5", "4) x ≤ 5"],
+    correct: 0
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "2x + 3 > 9",
+    choices: ["1) x > 3", "2) x ≥ 3", "3) x ≤ 3", "4) x < 2"],
+    correct: 0
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "3x - 2 < 10",
+    choices: ["1) x < 4", "2) x ≤ 4", "3) x > 4", "4) x ≥ 3"],
+    correct: 0
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "x/3 > 4",
+    choices: ["1) x > 12", "2) x ≤ 12", "3) x ≥ 0", "4) x < 0"],
+    correct: 0
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "-x/5 ≥ -3",
+    choices: ["1) x ≤ 15", "2) x ≥ 15", "3) x < 15", "4) x = 15"],
+    correct: 0
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "-x + 7 < 2",
+    choices: ["1) x > 5", "2) x ≥ 5", "3) x < -5", "4) x ≤ -5"],
+    correct: 0
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "2x - 1 ≥ 5x + 2",
+    choices: ["1) x ≤ -1", "2) x ≥ -1", "3) x < 1", "4) x > 1"],
+    correct: 0
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "2x + 4 < x - 3",
+    choices: ["1) x < -7", "2) x > -7", "3) x ≤ -1", "4) x ≥ -1"],
+    correct: 0
+  },
+
+  // 37~58
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "5x + 1 ≤ 3x + 7",
+    choices: ["1) x ≤ 3", "2) x > 3", "3) x ≥ -3", "4) x = 3"],
+    correct: 0
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "3x ≥ x + 5",
+    choices: ["1) x ≤ 5/2", "2) x ≥ 5/2", "3) x > 5", "4) x = 5/2"],
+    correct: 1
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "-x - 3 > x + 1",
+    choices: ["1) x < -2", "2) x > -2", "3) x = -2", "4) x ≤ -3"],
+    correct: 0
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "-2x + 1 < x - 5",
+    choices: ["1) x ≤ 2", "2) x > 2", "3) x ≥ -2", "4) x < -2"],
+    correct: 1
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "4x - 3 ≥ 6x + 5",
+    choices: ["1) x ≤ -4", "2) x ≥ -4", "3) x < 4", "4) x = -4"],
+    correct: 0
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "3x + 8 > 5x",
+    choices: ["1) x < 4", "2) x ≤ -4", "3) x ≥ 4", "4) x = 0"],
+    correct: 0
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "7x - 5 ≥ 5x + 9",
+    choices: ["1) x > 7", "2) x ≤ 7", "3) x ≥ 7", "4) x < -7"],
+    correct: 2
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "-5x + 7 < x - 5",
+    choices: ["1) x > 2", "2) x ≥ -2", "3) x = 2", "4) x < 2"],
+    correct: 0
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "x - 9 ≤ 1 - 3x",
+    choices: ["1) x < 2", "2) x ≤ -2", "3) x ≥ 2", "4) x = 2"],
+    correct: 0
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "3 - x > 4x - 7",
+    choices: ["1) x < 2", "2) x > 2", "3) x = -2", "4) x ≤ 1"],
+    correct: 0
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "9x - 4 ≤ 6x + 5",
+    choices: ["1) x < 3", "2) x ≥ 3", "3) x ≤ 3", "4) x = -3"],
+    correct: 2
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "3x - 8 ≥ 6x + 10",
+    choices: ["1) x ≥ -6", "2) x ≤ -6", "3) x = -6", "4) x < 6"],
+    correct: 1
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "-6x - 5 < x + 2",
+    choices: ["1) x > -1", "2) x < -1", "3) x ≤ -1", "4) x = 1"],
+    correct: 0
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "-2x + 3 ≥ x - 6",
+    choices: ["1) x ≥ 3", "2) x ≤ 3", "3) x = -3", "4) x < 0"],
+    correct: 1
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "x + 7 ≥ 5x - 9",
+    choices: ["1) x ≤ 4", "2) x ≥ 4", "3) x < -4", "4) x = 4"],
+    correct: 0
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "-2x + 8 ≥ 3x - 2",
+    choices: ["1) x ≤ 2", "2) x > 2", "3) x = 2", "4) x ≥ -2"],
+    correct: 0
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "3x - 6 < 8x + 9",
+    choices: ["1) x > -3", "2) x < -3", "3) x ≤ -3", "4) x = 3"],
+    correct: 0
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "8x - 3 < 4x + 3",
+    choices: ["1) x > 3/2", "2) x ≥ 3/2", "3) x < 3/2", "4) x = 3/2"],
+    correct: 2
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "14 - 2x ≤ 4 + 3x",
+    choices: ["1) x ≤ 2", "2) x ≥ 2", "3) x > -2", "4) x < -2"],
+    correct: 1
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "3x + 4 > 2x + 3",
+    choices: ["1) x < -1", "2) x = -1", "3) x > -1", "4) x ≤ 1"],
+    correct: 2
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "6x - 2 ≤ x + 8",
+    choices: ["1) x = 2", "2) x ≤ 2", "3) x ≥ 2", "4) x < -2"],
+    correct: 1
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "5x + 14 < 9x + 2",
+    choices: ["1) x ≤ 3", "2) x = 3", "3) x > 3", "4) x < -3"],
+    correct: 2
+  },
+
+  // 59~62
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "x + 7 ≥ 5x - 9",
+    choices: ["1) x ≤ 4", "2) x ≥ 4", "3) x = 4", "4) x > -4"],
+    correct: 0
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "2x - 2 < 5x - 8",
+    choices: ["1) x ≤ 2", "2) x > 2", "3) x < -2", "4) x = 2"],
+    correct: 1
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "-3x - 2 > -x + 6",
+    choices: ["1) x < -4", "2) x > -4", "3) x ≤ -4", "4) x = -4"],
+    correct: 0
+  },
+  {
+    instruction: "다음 일차부등식을 풀어라.",
+    question: "-2x + 8 ≥ 3x - 2",
+    choices: ["1) x ≤ 2", "2) x > 2", "3) x ≥ -2", "4) x = 2"],
+    correct: 0
+  }
+];
+
+// 합치기
+let allProblems = problem2Choices.concat(problem4Choices);
+
+/** 
+ * 문제 배열 섞어주기 (문제 순서만 무작위)
+ */
+function shuffleArray(array) {
+  for (let i = array.length - 1; i > 0; i--) {
+    const rand = Math.floor(Math.random() * (i + 1));
+    [array[i], array[rand]] = [array[rand], array[i]];
+  }
+  return array;
+}
+
+/*
+  전역 변수
+*/
+let shuffledProblems = [];
+let currentIndex = 0;
+let score = 0;
+let timeLimit = 0;
+let scorePerQuestion = 0;
+let timerId = null;
+let energyWidth = 100;
+let chances = 3;
+let startTime;
+let totalElapsedTime = 0;
+
+/**
+ * 난이도 버튼 클릭
+ */
+document.querySelectorAll('.difficultyBtn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    timeLimit = parseInt(btn.getAttribute('data-time'), 10);
+    scorePerQuestion = parseInt(btn.getAttribute('data-score'), 10);
+
+    const playerName = document.getElementById("playerName").value.trim();
+    if (!playerName) {
+      alert("이름을 입력해주세요!");
+      return;
+    }
+
+    // 문제 무작위 섞기
+    shuffledProblems = shuffleArray([...allProblems]);
+
+    // 첫 화면 -> 문제 화면
+    document.getElementById("introScreen").classList.add("hidden");
+    document.getElementById("quizScreen").classList.remove("hidden");
+
+    // 초기화
+    score = 0;
+    currentIndex = 0;
+    chances = 3;
+    energyWidth = 100;
+    document.getElementById("chanceDisplay").innerText = `남은 기회: ${chances}`;
+
+    // 전체 타이머 시작
+    startTime = new Date().getTime();
+    updateTotalTime();
+
+    showProblem();
+  });
+});
+
+/**
+ * 문제 표시
+ */
+function showProblem() {
+  if (currentIndex >= shuffledProblems.length) {
+    endGame("모든 문제를 풀었습니다!");
+    return;
+  }
+
+  const problem = shuffledProblems[currentIndex];
+  document.getElementById("chanceDisplay").innerText = `남은 기회: ${chances}`;
+  document.getElementById("scoreDisplay").innerText = `점수: ${score}`;
+
+  // 문제 지문
+  const qText = `
+    <p><strong>${problem.instruction}</strong></p>
+    <p>${problem.question}</p>
+  `;
+  document.getElementById("questionText").innerHTML = qText;
+
+  // 선택지 버튼 (2지선다 or 4지선다)
+  const optionContainer = document.getElementById("optionButtons");
+  optionContainer.innerHTML = "";
+
+  let numOptions = problem.choices.length; // 2 or 4
+  for (let i = 0; i < numOptions; i++) {
+    const btn = document.createElement("button");
+    btn.className = "optionBtn";
+    // 본문 요구사항: "선택하기 (n번)" 문구 제거 -> 바로 보기만 표시
+    btn.innerHTML = problem.choices[i]; 
+    btn.onclick = () => checkAnswer(i);
+    optionContainer.appendChild(btn);
+  }
+
+  // 에너지바
+  if (timeLimit > 0) {
+    energyWidth = 100;
+    document.getElementById("energyBar").style.width = energyWidth + "%";
+    if (timerId) {
+      clearInterval(timerId);
+    }
+    timerId = setInterval(() => {
+      energyWidth -= (100 / timeLimit);
+      if (energyWidth <= 0) {
+        energyWidth = 0;
+        document.getElementById("energyBar").style.width = "0%";
+        clearInterval(timerId);
+
+        // 시간 초과 -> 오답 처리
+        chances--;
+        if (chances <= 0) {
+          endGame("기회를 모두 소진하였습니다.");
+          return;
+        }
+        alert("시간이 초과되었습니다. 기회 1 감소!");
+        currentIndex++;
+        showProblem();
+      } else {
+        document.getElementById("energyBar").style.width = energyWidth + "%";
+      }
+    }, 1000);
+  } else {
+    // 시간 제한 없음
+    document.getElementById("energyBar").style.width = "100%";
+    if (timerId) {
+      clearInterval(timerId);
+    }
+    timerId = null;
+  }
+}
+
+/**
+ * 정답 체크
+ */
+function checkAnswer(choiceIndex) {
+  const problem = shuffledProblems[currentIndex];
+
+  if (timerId) {
+    clearInterval(timerId);
+  }
+
+  if (choiceIndex === problem.correct) {
+    score += scorePerQuestion;
+    alert("정답입니다!");
+  } else {
+    chances--;
+    alert(`틀렸습니다!\n정답은 ${problem.correct + 1}번 선택지입니다.`);
+    if (chances <= 0) {
+      endGame("기회를 모두 소진하였습니다.");
+      return;
+    }
+  }
+
+  currentIndex++;
+  showProblem();
+}
+
+/**
+ * 게임 종료
+ */
+function endGame(message) {
+  if (timerId) {
+    clearInterval(timerId);
+  }
+  const now = new Date().getTime();
+  const elapsed = Math.floor((now - startTime) / 1000);
+  totalElapsedTime = elapsed;
+
+  document.getElementById("quizScreen").classList.add("hidden");
+  document.getElementById("endScreen").classList.remove("hidden");
+  document.getElementById("finalMessage").innerText =
+    `${message}\n최종 점수: ${score}\n총 소요 시간: ${elapsed}초`;
+}
+
+/**
+ * 전체 경과 시간 업데이트
+ */
+function updateTotalTime() {
+  const now = new Date().getTime();
+  const elapsed = Math.floor((now - startTime) / 1000);
+  document.getElementById("totalTime").innerText = `전체 경과 시간: ${elapsed}초`;
+  requestAnimationFrame(updateTotalTime);
+}
+
+/**
+ * 점수 전송 버튼
+ */
+document.getElementById("sendScoreBtn").addEventListener("click", () => {
+  const playerName = document.getElementById("playerName").value.trim();
+  saveData("일차부등식", playerName, score, totalElapsedTime);
+});
+</script>
+</body>
+</html>
